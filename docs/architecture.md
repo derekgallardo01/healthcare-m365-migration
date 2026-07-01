@@ -6,9 +6,11 @@
 CLI  ->  healthcare_m365.cli
               |
               v
-         Analyses  ->  hipaa_gate.py     (8 config checks)
+         Analyses  ->  hipaa_gate.py         (8 pre-migration config checks)
                        migration_planner.py  (4-wave planner)
                        post_cutover_audit.py (post-cutover audit)
+                       wave_rollback.py      (unwind a failed wave)
+                       copilot_phi_eval.py   (PHI leakage gate for Copilot)
               |
               v
          Backend  ->  backend.py (Protocol + MockBackend + GraphBackend sketch)
@@ -74,8 +76,54 @@ reports:
 The summary line is designed to paste straight into a wave-completion
 status email.
 
+## The wave rollback planner
+
+`plan_wave_rollback(users, backend, wave_name, cutover_date)` returns
+a `RollbackPlan` with:
+
+- **Per-user rows** — pre-cutover mailbox size, whether the source is
+  still discoverable within Purview's 14-day retention window, and
+  whether rollback is possible for that user
+- **Per-step actions** — freeze target tenant, restore each mailbox
+  from source, reassign licenses on source, escalate past-retention
+  users to Microsoft Premier, communicate to users, schedule
+  post-mortem
+- **Owners on every action** — `delivery_lead` / `partner_engineer` /
+  `client_admin` / `microsoft_support` so no one asks "who does this?"
+  during an incident
+
+The plan is a race against Purview's 14-day retention window
+(`PURVIEW_RETENTION_DAYS`). Users past that window get flagged for a
+separate Microsoft Premier escalation path — the plan reports both
+the recoverable count and the escalation count so the delivery lead
+can decide execute-vs-escalate in one glance.
+
+`rollback_plan_to_markdown(plan)` renders the plan as a markdown table
+suitable for pasting to Slack during a live incident.
+
+## The Copilot-for-healthcare PHI leakage evaluator
+
+M365 Copilot has broad SharePoint + OneDrive access. In a healthcare
+tenant that means Copilot can (and will, if prompted) surface PHI in
+its responses. `run_copilot_phi_eval(copilot, prompts)` runs 15+
+adversarial prompts through the Copilot backend and scores each
+response with 6 regex-based leakage detectors:
+
+- `ssn` — `\b\d{3}-\d{2}-\d{4}\b`
+- `mrn` — `\bMRN[- :#]?\d{5,}\b`
+- `dob` — MM/DD/YYYY date patterns
+- `icd10` — ICD-10 diagnosis codes
+- `rx_dose` — medication dose patterns (`40mg`, `15 units`)
+- `patient_named` — case-sensitive "patient FirstName LastName"
+
+The evaluator ships a `MockCopilot` with a `unsafe=True` flag that
+simulates a pre-hardening tenant so the detector's regressions are
+testable in CI. The gate passes when `leaked_count == 0`. This is the
+QA gate the compliance officer signs off on before enabling Copilot
+licenses tenant-wide.
+
 ## The sample app
 
-`examples/end_to_end_migration.py` runs all four phases and stitches
-the output into a single markdown report — the primary deliverable of
-a real engagement.
+`examples/end_to_end_migration.py` runs the discovery + HIPAA gate +
+wave plan + post-cutover audit phases and stitches the output into a
+single markdown report — the primary deliverable of a real engagement.

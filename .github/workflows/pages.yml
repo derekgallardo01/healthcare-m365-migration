@@ -37,10 +37,13 @@ jobs:
           import sys
           from pathlib import Path
           sys.path.insert(0, "src")
-          from healthcare_m365.backend import get_backend
+          from datetime import timedelta
+          from healthcare_m365.backend import NOW, get_backend
+          from healthcare_m365.copilot_phi_eval import MockCopilot, run_copilot_phi_eval
           from healthcare_m365.hipaa_gate import run_hipaa_gate
           from healthcare_m365.migration_planner import plan_migration
           from healthcare_m365.post_cutover_audit import run_post_cutover_audit
+          from healthcare_m365.wave_rollback import plan_wave_rollback
 
           backend = get_backend()
           users = backend.list_users()
@@ -48,6 +51,11 @@ jobs:
           gate = run_hipaa_gate(backend)
           plan = plan_migration(backend)
           audit = run_post_cutover_audit(backend)
+          rollback = plan_wave_rollback(plan.waves[0].users, backend,
+                                        wave_name="Pilot",
+                                        cutover_date=NOW - timedelta(days=3))
+          phi_safe = run_copilot_phi_eval(copilot=MockCopilot(unsafe=False))
+          phi_unsafe = run_copilot_phi_eval(copilot=MockCopilot(unsafe=True))
 
           badge_status = "BLOCKED" if gate.blocked else "CLEARED"
           badge_class = "bad" if gate.blocked else "ok"
@@ -256,6 +264,23 @@ jobs:
                 <h2>Post-cutover audit (simulated: wave 1 completed)</h2>
                 <div class="summary-line">{html.escape(audit.summary())}</div>
                 {audit_html}
+              </div>
+
+              <div class="card">
+                <h2>Wave rollback plan (simulated: pilot failed 3 days ago)</h2>
+                <div class="summary-line">{html.escape(rollback.summary())}</div>
+                <p>Purview retention window: 14 days. Users within: {rollback.within_retention}. Past: {rollback.past_retention}.
+                Escalation required: {"yes" if rollback.escalation_required else "no"}.</p>
+                <p><strong>{len(rollback.actions)} actions</strong> assigned across delivery_lead, partner_engineer,
+                client_admin, and microsoft_support. Every failing user's rollback effort scales with mailbox size.</p>
+              </div>
+
+              <div class="card">
+                <h2>Copilot PHI leakage evaluator</h2>
+                <div class="summary-line">Safe MockCopilot: {html.escape(phi_safe.summary())}</div>
+                <div class="summary-line">Unsafe MockCopilot (pre-hardening simulation): {html.escape(phi_unsafe.summary())}</div>
+                <p>15 adversarial prompts run through 6 regex-based leakage detectors (SSN / MRN / DOB / medication / ICD-10 / patient-named).
+                Gate passes only when zero prompts leak. This is the compliance sign-off before enabling Copilot licenses tenant-wide.</p>
               </div>
 
               <div class="footer">

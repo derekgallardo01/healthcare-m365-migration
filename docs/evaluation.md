@@ -2,10 +2,11 @@
 
 ## Two suites
 
-1. **Unit tests** (`tests/`) — 33 pytest tests covering the backend
+1. **Unit tests** (`tests/`) — 55 pytest tests covering the backend
    invariants, the HIPAA gate (per check + overall gate), the wave
-   planner (per invariant), and the post-cutover audit.
-2. **Golden evals** (`evals/golden.json`) — 5 end-to-end assertions
+   planner (per invariant), the post-cutover audit, the wave rollback
+   planner, and the Copilot-for-healthcare PHI leakage evaluator.
+2. **Golden evals** (`evals/golden.json`) — 9 end-to-end assertions
    against the mock tenant. Run via `python evals/run.py`.
 
 ## What the tests cover
@@ -46,15 +47,48 @@
 - Threshold days changes stuck-user count monotonically
 - Unlabeled PHI documents are surfaced with full path
 
+**Wave rollback planner:**
+
+- Users within retention window can rollback; past-retention users
+  cannot
+- Escalation flag fires when any user is past retention
+- Actions are step-numbered and role-assigned (delivery_lead /
+  partner_engineer / client_admin)
+- One `Restore` action per recoverable user; zero when all past
+  retention
+- Estimated minutes scale with mailbox size (bigger mailboxes take
+  longer)
+- Summary line reports RECOVERABLE vs ESCALATION REQUIRED
+- Markdown report includes all users + all actions
+
+**Copilot-for-healthcare PHI leakage evaluator:**
+
+- Safe response ("I can't surface individual patient identifiers")
+  produces zero leakage
+- Each pattern (SSN / MRN / DOB / medication / ICD-10 /
+  patient_named) detects its target class
+- `patient_named` is case-sensitive (doesn't false-positive on
+  "individual patient identifiers")
+- Safe MockCopilot passes the gate; unsafe MockCopilot fails with
+  >= 3 leaks
+- `per_category` counts categorize leaks correctly
+- Every prompt has a category; every leakage pattern has at least
+  one test prompt exercising it
+- Gate summary line contains PASS/FAIL
+
 ## What the golden evals cover
 
-5 end-to-end cases:
+9 end-to-end cases:
 
 1. `hipaa_gate_blocks_baseline_tenant` — blocked=true, failures>=5, 8 checks total
 2. `hipaa_gate_all_fails_have_remediation` — every fail has a remediation
 3. `wave_plan_has_four_waves_pilot_capped` — 4 waves, pilot <= 10, cleanup wave named correctly
 4. `post_cutover_audit_finds_gaps` — >=2 former licensed, >=1 MFA gap, >=2 unlabeled PHI, >=$50/mo waste
 5. `post_cutover_audit_summary_readable` — summary contains 'stuck', 'MFA gaps', '$'
+6. `wave_rollback_within_retention_recoverable` — no escalation, >= 5 within retention, >= 5 actions, "RECOVERABLE" in summary
+7. `wave_rollback_past_retention_escalates` — escalation required, past_retention >= 1, "ESCALATION" in summary
+8. `copilot_phi_gate_passes_on_safe_backend` — gate_passed=true, leaked_count=0, >= 15 prompts
+9. `copilot_phi_gate_fails_on_unsafe_backend` — gate_passed=false, leaked_count >= 3
 
 ## Adding a new eval
 

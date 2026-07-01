@@ -33,12 +33,15 @@ tenant:
 healthcare-m365 hipaa-gate                        # HIPAA gate only
 healthcare-m365 plan-migration                    # wave plan only
 healthcare-m365 post-cutover-audit                # audit only
+healthcare-m365 wave-rollback --days-since-cutover 5   # unwind a failed wave
+healthcare-m365 copilot-phi-eval                  # Copilot PHI leakage eval
 ```
 
 Every subcommand supports `--json` for machine-readable output:
 
 ```bash
 healthcare-m365 hipaa-gate --json | jq '.checks[] | select(.status=="fail")'
+healthcare-m365 copilot-phi-eval --unsafe --json   # simulate broken tenant
 ```
 
 ## Run the end-to-end sample app
@@ -55,8 +58,8 @@ detailed breakdown.
 ## Run tests + evals
 
 ```bash
-python -m pytest -q     # 33 unit tests
-python evals/run.py     # 5 golden eval cases
+python -m pytest -q     # 55 unit tests
+python evals/run.py     # 9 golden eval cases
 ```
 
 ## Next

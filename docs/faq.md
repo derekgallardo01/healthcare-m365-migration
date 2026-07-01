@@ -68,6 +68,48 @@ gates the *destination* tenant.
 
 ---
 
+**Q: The wave rollback says "past retention" — is my data gone?**
+
+Not necessarily. Microsoft's default recoverable-items window is 14
+days, but E5 tenants can extend retention up to 365 days, and
+individual mailboxes can have hold policies that keep them
+recoverable indefinitely. The `PURVIEW_RETENTION_DAYS = 14` constant
+is a **conservative** default — if your engagement has extended
+retention configured, bump this constant.
+
+Even past that window, Microsoft Premier support has been known to
+recover mailboxes via internal snapshot restoration when the
+business impact justifies it. The rollback planner opens that ticket
+automatically as step 4.
+
+---
+
+**Q: The Copilot PHI eval passed on the safe MockCopilot — does that
+mean real Microsoft Copilot is safe?**
+
+No. The eval validates the **detector**, not Copilot. The safe
+MockCopilot exists so the detector's regressions are testable in CI.
+For a real tenant, replace `MockCopilot` with a `GraphCopilot`
+binding (see `docs/customization.md`) and run the eval against real
+Copilot before enabling licenses tenant-wide. Expect 3-8 leaks on a
+brand-new tenant that hasn't been Purview-hardened.
+
+---
+
+**Q: How many prompts is enough for a compliance sign-off?**
+
+The kit ships 15 default prompts covering the 6 detector patterns.
+For a real compliance package, you want:
+
+- 30+ prompts per PHI category (SSN, MRN, DOB, medication, ICD-10)
+- Prompts from the compliance officer's own risk register
+- Prompts that mirror the actual questions clinicians are asking
+  (pull these from the tenant's search logs)
+
+Add cases to `DEFAULT_PROMPTS` per `docs/customization.md`.
+
+---
+
 **Q: Do you offer this as a delivered engagement?**
 
 Yes. See my Upwork profile at

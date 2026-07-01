@@ -79,3 +79,50 @@ flowchart LR
     W --> R
     UN --> R
 ```
+
+## Wave rollback
+
+```mermaid
+flowchart TB
+    start[Failed wave<br/>N users affected] --> D{Days since cutover?}
+    D -->|less than 14| P[Purview retention window OPEN]
+    D -->|more than 14| E[Purview retention window CLOSED]
+
+    P --> A1[1. Freeze target tenant<br/>Disable Conditional Access + pause SMT]
+    A1 --> A2[2. Restore each mailbox<br/>from source Recovery Items]
+    A2 --> A3[3. Reassign licenses<br/>on source tenant]
+    A3 --> A4[4. Communicate to users<br/>+ schedule post-mortem]
+    A4 --> DONE[Recoverable]
+
+    E --> A5[1. Freeze target tenant]
+    A5 --> ESC[Escalate to Microsoft Premier<br/>+ practice-manager decision]
+    ESC --> DONE2[Escalation required]
+
+    A2 -. per-user est_minutes<br/>scales with mailbox size .-> A2
+```
+
+## Copilot-for-healthcare PHI eval
+
+```mermaid
+flowchart LR
+    P[15+ adversarial prompts] --> C[MockCopilot<br/>OR GraphCopilot]
+    C --> R[Response]
+    R --> D[detect_leakage]
+
+    D --> S{SSN pattern?}
+    D --> M{MRN pattern?}
+    D --> DB{DOB pattern?}
+    D --> IC{ICD-10 pattern?}
+    D --> RX{Rx dose pattern?}
+    D --> PN{patient FirstName LastName?}
+
+    S --> GATE{leaked_count == 0?}
+    M --> GATE
+    DB --> GATE
+    IC --> GATE
+    RX --> GATE
+    PN --> GATE
+
+    GATE -->|yes| PASS[Copilot cleared for tenant]
+    GATE -->|no| FAIL[Compliance officer blocks rollout<br/>+ tenant needs Purview hardening]
+```
