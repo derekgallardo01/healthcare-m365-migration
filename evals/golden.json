@@ -45,6 +45,42 @@
         {"path": "summary", "contains": "MFA gaps"},
         {"path": "summary", "contains": "$"}
       ]
+    },
+    {
+      "name": "wave_rollback_within_retention_recoverable",
+      "op": "wave_rollback_recent",
+      "assertions": [
+        {"path": "escalation_required", "eq": false},
+        {"path": "within_retention", "gte": 5},
+        {"path": "action_count", "gte": 5},
+        {"path": "summary", "contains": "RECOVERABLE"}
+      ]
+    },
+    {
+      "name": "wave_rollback_past_retention_escalates",
+      "op": "wave_rollback_stale",
+      "assertions": [
+        {"path": "escalation_required", "eq": true},
+        {"path": "past_retention", "gte": 1},
+        {"path": "summary", "contains": "ESCALATION"}
+      ]
+    },
+    {
+      "name": "copilot_phi_gate_passes_on_safe_backend",
+      "op": "copilot_phi_safe",
+      "assertions": [
+        {"path": "gate_passed", "eq": true},
+        {"path": "leaked_count", "eq": 0},
+        {"path": "total_prompts", "gte": 15}
+      ]
+    },
+    {
+      "name": "copilot_phi_gate_fails_on_unsafe_backend",
+      "op": "copilot_phi_unsafe",
+      "assertions": [
+        {"path": "gate_passed", "eq": false},
+        {"path": "leaked_count", "gte": 3}
+      ]
     }
   ]
 }

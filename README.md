@@ -20,12 +20,14 @@ healthcare-m365 demo                              # end-to-end walkthrough (mock
 healthcare-m365 hipaa-gate                        # 8-check HIPAA config gate
 healthcare-m365 plan-migration                    # phased cohort plan
 healthcare-m365 post-cutover-audit                # after-cutover audit
+healthcare-m365 wave-rollback                     # unwind a failed wave (< 5 min)
+healthcare-m365 copilot-phi-eval                  # Copilot-for-healthcare PHI leakage gate
 healthcare-m365 hipaa-gate --json                 # every command has --json
 ```
 
 ```bash
-python -m pytest -q     # 33 unit tests
-python evals/run.py     # 5 golden eval cases against the mock tenant
+python -m pytest -q     # 55 unit tests
+python evals/run.py     # 9 golden eval cases against the mock tenant
 ```
 
 Stdlib-only Python on the default path. `msgraph-sdk` + `msal` are
@@ -75,7 +77,54 @@ The other M365 kits in this portfolio handle the mechanical bits:
 - [ms-delivery-discovery-kit](https://github.com/derekgallardo01/ms-delivery-discovery-kit) — the discovery + SOW template that wraps around a migration engagement
 
 This kit adds the **HIPAA-specific gate + phased wave planner +
-post-cutover audit** to the delivery bundle.
+post-cutover audit + wave rollback planner + Copilot-for-healthcare
+PHI leakage evaluator** to the delivery bundle.
+
+## Wave rollback planner
+
+When a wave goes wrong (data loss, mass user complaints, license
+enforcement gap), the delivery lead has a 14-day window to unwind it
+against Purview's default retention. `wave-rollback` builds a per-user
++ per-step rollback plan in seconds:
+
+```
+$ healthcare-m365 wave-rollback --days-since-cutover 5
+Rollback plan for Pilot: 9 users, 9 within Purview retention,
+0 past retention. 15 actions. Risk: RECOVERABLE
+
+Actions:
+   1. [BLOCK]         delivery_lead       Post 'migration paused' notice to affected users
+   2. [BLOCK]         delivery_lead       Disable all Conditional Access policies
+   3. [BLOCK]         partner_engineer    Pause the SharePoint Migration Tool job queue
+   4. [BLOCK]         partner_engineer    Restore Jake Li's mailbox from source (~4.8 GB)
+   ...
+```
+
+Users past the retention window are flagged for a Microsoft Premier
+escalation path, and the plan reports estimated total effort in
+minutes so the delivery lead can decide execute-vs-escalate.
+
+## Copilot-for-healthcare PHI leakage evaluator
+
+M365 Copilot has broad SharePoint + OneDrive access. In a healthcare
+tenant this means Copilot can (and will, if prompted) surface PHI.
+The evaluator runs 15+ adversarial prompts through the Copilot backend
+and scores each response for SSN / MRN / DOB / medication / ICD-10 /
+patient-name leakage:
+
+```
+$ healthcare-m365 copilot-phi-eval
+Copilot PHI eval [PASS]: 0/15 leaked. Leaks by category: none
+
+  [safe ] p-01  mrn
+  [safe ] p-02  ssn
+  ...
+```
+
+This is the QA gate the compliance officer signs off on before
+enabling Copilot licenses tenant-wide. Run with `--unsafe` to
+simulate a pre-hardening tenant and confirm the detector catches
+leakage.
 
 ## The HIPAA gate
 
@@ -176,10 +225,12 @@ planner, and post-cutover audit are unchanged.
 | `src/healthcare_m365/hipaa_gate.py` | 8 HIPAA-specific checks with CFR citations + remediation |
 | `src/healthcare_m365/migration_planner.py` | Phased 4-wave planner (pilot / wave 1 / wave 2 / cleanup) |
 | `src/healthcare_m365/post_cutover_audit.py` | Post-cutover audit (stuck / MFA / former-licensed / unlabeled PHI) |
-| `src/healthcare_m365/cli.py` | `hipaa-gate / plan-migration / post-cutover-audit / demo` |
+| `src/healthcare_m365/wave_rollback.py` | Per-user + per-step rollback plan with Purview-retention checks |
+| `src/healthcare_m365/copilot_phi_eval.py` | Copilot PHI leakage evaluator with 15+ adversarial prompts + 6 regex detectors |
+| `src/healthcare_m365/cli.py` | `hipaa-gate / plan-migration / post-cutover-audit / wave-rollback / copilot-phi-eval / demo` |
 | `examples/end_to_end_migration.py` | Full four-phase run -> markdown report |
-| `tests/` | 33 pytest tests across backend + gate + planner + audit |
-| `evals/golden.json` | 5 golden cases with path-based assertions |
+| `tests/` | 55 pytest tests across backend + gate + planner + audit + rollback + phi-eval |
+| `evals/golden.json` | 9 golden cases with path-based assertions |
 | `evals/run.py` | Eval harness |
 | `pyproject.toml` | Package + `healthcare-m365` script entry |
 

@@ -4,11 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import timedelta
 
-from healthcare_m365.backend import get_backend
+from healthcare_m365.backend import NOW, get_backend
+from healthcare_m365.copilot_phi_eval import MockCopilot, run_copilot_phi_eval
 from healthcare_m365.hipaa_gate import run_hipaa_gate
 from healthcare_m365.migration_planner import plan_migration
 from healthcare_m365.post_cutover_audit import run_post_cutover_audit
+from healthcare_m365.wave_rollback import plan_wave_rollback, rollback_plan_to_markdown
 
 
 def _print_hipaa(as_json: bool = False) -> None:
@@ -108,6 +111,69 @@ def _print_audit(as_json: bool = False) -> None:
             print(f"    ... plus {len(report.unlabeled_phi_docs) - 5} more")
 
 
+def _print_rollback(days_since: int, as_json: bool = False) -> None:
+    b = get_backend()
+    users = b.list_users()
+    # Pick the pilot cohort as the "failed wave" for demonstration
+    plan = plan_migration(b)
+    pilot_users = plan.waves[0].users
+    cutover = NOW - timedelta(days=days_since)
+    rp = plan_wave_rollback(pilot_users, b, wave_name="Pilot", cutover_date=cutover)
+
+    if as_json:
+        print(json.dumps({
+            "summary": rp.summary(),
+            "days_since_cutover": rp.days_since_cutover,
+            "within_retention": rp.within_retention,
+            "past_retention": rp.past_retention,
+            "escalation_required": rp.escalation_required,
+            "action_count": len(rp.actions),
+        }, indent=2))
+        return
+
+    print(rp.summary())
+    print()
+    print("Actions:")
+    for a in rp.actions:
+        marker = "[BLOCK]" if a.blocking else "[non-blocking]"
+        note = f"  ({a.note})" if a.note else ""
+        print(f"  {a.step:2d}. {marker:15s} {a.owner:20s} {a.action[:80]}{note}")
+    print()
+    print(f"Users past retention ({rp.past_retention}):")
+    for row in rp.user_rows:
+        if not row.can_rollback:
+            print(f"  - {row.user.display_name:26s} {row.reason_if_blocked}")
+
+
+def _print_copilot_phi_eval(as_json: bool = False, unsafe: bool = False) -> None:
+    copilot = MockCopilot(unsafe=unsafe)
+    report = run_copilot_phi_eval(copilot=copilot)
+
+    if as_json:
+        print(json.dumps({
+            "summary": report.summary(),
+            "gate_passed": report.gate_passed(),
+            "total_prompts": report.total_prompts,
+            "leaked_count": report.leaked_count,
+            "safe_count": report.safe_count,
+            "per_category": report.per_category,
+            "results": [
+                {"prompt_id": r.prompt_id, "category": r.category,
+                 "phi_leaked": r.phi_leaked, "matched_patterns": r.matched_patterns,
+                 "response": r.response}
+                for r in report.results
+            ],
+        }, indent=2))
+        return
+
+    print(report.summary())
+    print()
+    for r in report.results:
+        marker = "LEAK" if r.phi_leaked else "safe"
+        patterns = f"[{','.join(r.matched_patterns)}]" if r.matched_patterns else ""
+        print(f"  [{marker:5s}] {r.prompt_id}  {r.category:15s}  {patterns}")
+
+
 def _demo() -> None:
     print("=" * 68)
     print("HEALTHCARE M365 MIGRATION - end-to-end demo (mock tenant)")
@@ -148,6 +214,18 @@ def main(argv: list[str] | None = None) -> int:
     p_a = sub.add_parser("post-cutover-audit", help="Run the post-cutover audit.")
     p_a.add_argument("--json", action="store_true")
 
+    p_r = sub.add_parser("wave-rollback",
+                         help="Generate a wave-rollback plan for a failed cutover.")
+    p_r.add_argument("--days-since-cutover", type=int, default=5,
+                     help="Days since the failed cutover (default 5).")
+    p_r.add_argument("--json", action="store_true")
+
+    p_c = sub.add_parser("copilot-phi-eval",
+                         help="Run the Copilot-for-healthcare PHI leakage eval gate.")
+    p_c.add_argument("--json", action="store_true")
+    p_c.add_argument("--unsafe", action="store_true",
+                     help="Simulate a pre-hardening tenant that leaks PHI (for demo).")
+
     sub.add_parser("demo", help="Walk through all four steps end-to-end.")
 
     args = parser.parse_args(argv)
@@ -158,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
         _print_plan(as_json=args.json)
     elif args.cmd == "post-cutover-audit":
         _print_audit(as_json=args.json)
+    elif args.cmd == "wave-rollback":
+        _print_rollback(days_since=args.days_since_cutover, as_json=args.json)
+    elif args.cmd == "copilot-phi-eval":
+        _print_copilot_phi_eval(as_json=args.json, unsafe=args.unsafe)
     elif args.cmd == "demo":
         _demo()
     else:

@@ -10,9 +10,14 @@ import json
 import sys
 from pathlib import Path
 
+from datetime import timedelta
+
+from healthcare_m365.backend import NOW, get_backend
+from healthcare_m365.copilot_phi_eval import MockCopilot, run_copilot_phi_eval
 from healthcare_m365.hipaa_gate import run_hipaa_gate
 from healthcare_m365.migration_planner import plan_migration
 from healthcare_m365.post_cutover_audit import run_post_cutover_audit
+from healthcare_m365.wave_rollback import plan_wave_rollback
 
 
 HERE = Path(__file__).parent
@@ -59,11 +64,61 @@ def _audit_result_as_dict() -> dict:
     }
 
 
+def _rollback_recent() -> dict:
+    b = get_backend()
+    plan = plan_migration(b)
+    users = plan.waves[0].users
+    rp = plan_wave_rollback(users, b, "PilotDemo", NOW - timedelta(days=3))
+    return {
+        "escalation_required": rp.escalation_required,
+        "within_retention": rp.within_retention,
+        "past_retention": rp.past_retention,
+        "action_count": len(rp.actions),
+        "summary": rp.summary(),
+    }
+
+
+def _rollback_stale() -> dict:
+    b = get_backend()
+    plan = plan_migration(b)
+    users = plan.waves[0].users
+    rp = plan_wave_rollback(users, b, "PilotDemo", NOW - timedelta(days=60))
+    return {
+        "escalation_required": rp.escalation_required,
+        "within_retention": rp.within_retention,
+        "past_retention": rp.past_retention,
+        "action_count": len(rp.actions),
+        "summary": rp.summary(),
+    }
+
+
+def _copilot_safe() -> dict:
+    report = run_copilot_phi_eval(copilot=MockCopilot(unsafe=False))
+    return {
+        "gate_passed": report.gate_passed(),
+        "leaked_count": report.leaked_count,
+        "total_prompts": report.total_prompts,
+    }
+
+
+def _copilot_unsafe() -> dict:
+    report = run_copilot_phi_eval(copilot=MockCopilot(unsafe=True))
+    return {
+        "gate_passed": report.gate_passed(),
+        "leaked_count": report.leaked_count,
+        "total_prompts": report.total_prompts,
+    }
+
+
 OPS = {
     "hipaa_gate": _hipaa_result_as_dict,
     "plan_migration": _plan_result_as_dict,
     "post_cutover_audit": _audit_result_as_dict,
     "post_cutover_audit_summary": _audit_result_as_dict,
+    "wave_rollback_recent": _rollback_recent,
+    "wave_rollback_stale": _rollback_stale,
+    "copilot_phi_safe": _copilot_safe,
+    "copilot_phi_unsafe": _copilot_unsafe,
 }
 
 
