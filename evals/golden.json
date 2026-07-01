@@ -1,0 +1,50 @@
+{
+  "description": "Path-based assertions against the mock tenant. Ships intentional gaps so every check has a signal to report.",
+  "cases": [
+    {
+      "name": "hipaa_gate_blocks_baseline_tenant",
+      "op": "hipaa_gate",
+      "assertions": [
+        {"path": "blocked", "eq": true},
+        {"path": "failures", "gte": 5},
+        {"path": "checks.length", "eq": 8}
+      ]
+    },
+    {
+      "name": "hipaa_gate_all_fails_have_remediation",
+      "op": "hipaa_gate",
+      "assertions": [
+        {"path": "checks.every_fail_has_remediation", "eq": true}
+      ]
+    },
+    {
+      "name": "wave_plan_has_four_waves_pilot_capped",
+      "op": "plan_migration",
+      "assertions": [
+        {"path": "waves.length", "eq": 4},
+        {"path": "waves.0.name", "eq": "Pilot"},
+        {"path": "waves.0.user_count", "lte": 10},
+        {"path": "waves.3.name", "contains": "Cleanup"}
+      ]
+    },
+    {
+      "name": "post_cutover_audit_finds_gaps",
+      "op": "post_cutover_audit",
+      "assertions": [
+        {"path": "former_still_licensed.length", "gte": 2},
+        {"path": "mfa_gaps.length", "gte": 1},
+        {"path": "unlabeled_phi_docs.length", "gte": 2},
+        {"path": "licenses_at_risk_usd", "gte": 50.0}
+      ]
+    },
+    {
+      "name": "post_cutover_audit_summary_readable",
+      "op": "post_cutover_audit_summary",
+      "assertions": [
+        {"path": "summary", "contains": "stuck"},
+        {"path": "summary", "contains": "MFA gaps"},
+        {"path": "summary", "contains": "$"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "repo": "healthcare-m365-migration",
+  "title": "Healthcare M365 migration",
+  "kicker": "HIPAA - phased waves - post-cutover audit",
+  "tagline": "HIPAA-aware M365 migration kit for healthcare orgs. 8 tenant-config checks with CFR citations + 4-wave phased planner + post-cutover audit against a bundled 50-user mock tenant.",
+  "features": [
+    { "label": "HIPAA checks", "value": "8 config gates" },
+    { "label": "Wave planner", "value": "4 waves + MFA blockers" },
+    { "label": "Post-cutover", "value": "stuck, MFA, $ waste, PHI" },
+    { "label": "Tests", "value": "33 pytest + 5 evals" }
+  ],
+  "theme": {
+    "primary": "#0f766e",
+    "accent": "#14b8a6"
+  }
+}

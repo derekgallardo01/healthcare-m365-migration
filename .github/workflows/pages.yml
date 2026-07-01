@@ -1,0 +1,281 @@
+name: Deploy live demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: pip install --quiet -e .
+
+      - name: Generate the static demo report
+        run: |
+          mkdir -p site
+          python - <<'PY'
+          import html
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "src")
+          from healthcare_m365.backend import get_backend
+          from healthcare_m365.hipaa_gate import run_hipaa_gate
+          from healthcare_m365.migration_planner import plan_migration
+          from healthcare_m365.post_cutover_audit import run_post_cutover_audit
+
+          backend = get_backend()
+          users = backend.list_users()
+          config = backend.get_tenant_config()
+          gate = run_hipaa_gate(backend)
+          plan = plan_migration(backend)
+          audit = run_post_cutover_audit(backend)
+
+          badge_status = "BLOCKED" if gate.blocked else "CLEARED"
+          badge_class = "bad" if gate.blocked else "ok"
+
+          check_html_parts = []
+          for c in gate.checks:
+              status_class = {"pass": "ok", "warn": "warn", "fail": "bad"}[c.status]
+              status_marker = c.status.upper()
+              remediation_html = ""
+              if c.remediation:
+                  remediation_html = (
+                      "<div class='remediation'>"
+                      f"<strong>Fix:</strong> {html.escape(c.remediation)}"
+                      "</div>"
+                  )
+              check_html_parts.append(
+                  "<div class='check'>"
+                  f"<div class='check-header'>"
+                  f"<span class='badge {status_class}'>{status_marker}</span>"
+                  f"<span class='cname'>{html.escape(c.name)}</span>"
+                  f"<span class='citation'>{html.escape(c.hipaa_citation)}</span>"
+                  "</div>"
+                  f"<div class='detail'>{html.escape(c.detail)}</div>"
+                  f"{remediation_html}"
+                  "</div>"
+              )
+
+          checks_html = "\n".join(check_html_parts)
+
+          wave_rows = []
+          for w in plan.waves:
+              users_str = ", ".join(u.display_name for u in w.users[:6])
+              if w.user_count() > 6:
+                  users_str += f" ... +{w.user_count() - 6} more"
+              blockers_str = f"{len(w.blockers)} MFA gap(s)" if w.blockers else "-"
+              wave_rows.append(
+                  "<tr>"
+                  f"<td>{w.order}</td>"
+                  f"<td>{html.escape(w.name)}</td>"
+                  f"<td>{w.user_count()}</td>"
+                  f"<td>{w.est_hours:.1f} h</td>"
+                  f"<td>{blockers_str}</td>"
+                  f"<td class='wusers'>{html.escape(users_str)}</td>"
+                  "</tr>"
+              )
+          waves_html = "\n".join(wave_rows)
+
+          audit_html_parts = []
+          if audit.former_still_licensed:
+              names = ", ".join(u.display_name for u in audit.former_still_licensed)
+              audit_html_parts.append(
+                  "<div class='audit-block'>"
+                  f"<h3>Former staff still licensed - ${audit.licenses_at_risk_usd:.2f}/mo waste</h3>"
+                  f"<p>{html.escape(names)}</p>"
+                  "</div>"
+              )
+          if audit.mfa_gaps:
+              names = ", ".join(u.display_name for u in audit.mfa_gaps)
+              audit_html_parts.append(
+                  "<div class='audit-block'>"
+                  f"<h3>MFA gaps ({len(audit.mfa_gaps)})</h3>"
+                  f"<p>{html.escape(names)}</p>"
+                  "</div>"
+              )
+          if audit.stuck_users:
+              names = ", ".join(u.display_name for u in audit.stuck_users)
+              audit_html_parts.append(
+                  "<div class='audit-block'>"
+                  f"<h3>Stuck users ({len(audit.stuck_users)})</h3>"
+                  f"<p>{html.escape(names)}</p>"
+                  "</div>"
+              )
+          if audit.unlabeled_phi_docs:
+              docs = "<br>".join(html.escape(p) for p in audit.unlabeled_phi_docs)
+              audit_html_parts.append(
+                  "<div class='audit-block'>"
+                  f"<h3>Unlabeled PHI documents ({len(audit.unlabeled_phi_docs)})</h3>"
+                  f"<p><code>{docs}</code></p>"
+                  "</div>"
+              )
+          audit_html = "\n".join(audit_html_parts)
+
+          license_mix = {}
+          for u in users:
+              license_mix[u.license_sku] = license_mix.get(u.license_sku, 0) + 1
+          license_html = " &middot; ".join(
+              f"<code>{sku}</code> x {n}" for sku, n in sorted(license_mix.items())
+          )
+
+          depts_html = ", ".join(sorted({u.department for u in users}))
+          total_active = sum(1 for u in users if u.account_enabled)
+          total_former = sum(1 for u in users if u.is_former)
+          total_mailboxes = len(backend.list_source_mailboxes())
+          total_gb = sum(m.size_gb for m in backend.list_source_mailboxes())
+
+          page = f"""<!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Healthcare M365 migration - live demo</title>
+            <style>
+              :root {{
+                --primary: #0f766e; --accent: #14b8a6;
+                --bg: #f0fdfa; --border: #99f6e4;
+                --ink: #134e4a; --muted: #6b7280;
+                --ok: #047857; --warn: #b45309; --bad: #b91c1c;
+              }}
+              * {{ box-sizing: border-box; }}
+              body {{
+                margin: 0; font-family: 'Segoe UI', system-ui, sans-serif;
+                background: var(--bg); color: var(--ink); line-height: 1.5;
+              }}
+              .hero {{
+                background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+                color: white; padding: 50px 24px 60px;
+              }}
+              .hero-inner {{ max-width: 1000px; margin: 0 auto; }}
+              .hero .kicker {{ font-size: 13px; letter-spacing: 2px; opacity: .8; text-transform: uppercase; }}
+              .hero h1 {{ font-size: 38px; margin: 10px 0 14px; line-height: 1.1; }}
+              .hero p {{ font-size: 17px; margin: 0; opacity: .92; max-width: 760px; }}
+              .container {{ max-width: 1000px; margin: -30px auto 60px; padding: 0 24px; }}
+              .card {{
+                background: white; border: 1px solid var(--border); border-radius: 12px;
+                padding: 24px 28px; margin: 16px 0;
+                box-shadow: 0 1px 3px rgba(15, 118, 110, .08);
+              }}
+              .card h2 {{ margin: 0 0 12px; color: var(--primary); font-size: 22px; }}
+              .discovery {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }}
+              .discovery > div {{ background: #ccfbf1; padding: 12px 16px; border-radius: 6px; }}
+              .discovery strong {{ display: block; color: var(--primary); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 4px; }}
+              .summary-line {{ font-family: Consolas, monospace; background: #134e4a; color: #ccfbf1; padding: 14px 18px; border-radius: 6px; font-size: 14px; }}
+              .badge {{ color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; letter-spacing: 1px; font-weight: 700; margin-right: 10px; }}
+              .badge.ok {{ background: var(--ok); }}
+              .badge.warn {{ background: var(--warn); }}
+              .badge.bad {{ background: var(--bad); }}
+              .status-badge {{ display: inline-block; padding: 6px 16px; border-radius: 16px; font-weight: 700; color: white; }}
+              .status-badge.ok {{ background: var(--ok); }}
+              .status-badge.bad {{ background: var(--bad); }}
+              .check {{ border-left: 4px solid var(--border); padding: 12px 16px; margin: 12px 0; background: #f0fdfa; border-radius: 4px; }}
+              .check-header {{ display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }}
+              .cname {{ font-weight: 600; }}
+              .citation {{ margin-left: auto; color: var(--muted); font-size: 12px; font-family: Consolas, monospace; }}
+              .detail {{ font-size: 14px; margin-bottom: 8px; }}
+              .remediation {{ font-size: 13px; color: var(--ink); background: white; border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 4px; }}
+              table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+              th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }}
+              th {{ background: #ccfbf1; color: var(--primary); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }}
+              .wusers {{ color: var(--muted); font-size: 12px; }}
+              .audit-block {{ background: #fef2f2; border-left: 4px solid var(--bad); padding: 12px 18px; margin: 10px 0; border-radius: 4px; }}
+              .audit-block h3 {{ margin: 0 0 6px; color: var(--bad); font-size: 15px; }}
+              .audit-block p {{ margin: 0; font-size: 13px; }}
+              code {{ background: #ccfbf1; padding: 2px 6px; border-radius: 4px; color: var(--primary); font-size: 12px; }}
+              .footer {{ margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; text-align: center; }}
+              .footer a {{ color: var(--accent); }}
+            </style>
+          </head>
+          <body>
+            <div class="hero">
+              <div class="hero-inner">
+                <div class="kicker">Healthcare &middot; HIPAA &middot; M365 pilot migration</div>
+                <h1>Healthcare M365 migration - live demo</h1>
+                <p>Full pilot-migration report generated against a bundled 50-user
+                mock healthcare tenant. Every push regenerates this page:
+                discovery, HIPAA gate (8 config checks with CFR citations),
+                4-wave phased plan, and post-cutover audit.</p>
+              </div>
+            </div>
+
+            <div class="container">
+              <div class="card">
+                <h2>Discovery</h2>
+                <div class="discovery">
+                  <div><strong>Total users</strong>{len(users)}</div>
+                  <div><strong>Active</strong>{total_active}</div>
+                  <div><strong>Departments</strong>{depts_html}</div>
+                  <div><strong>License mix</strong>{license_html}</div>
+                  <div><strong>Mailbox data</strong>{total_gb:.1f} GB across {total_mailboxes} mailboxes</div>
+                  <div><strong>Former (offboard only)</strong>{total_former}</div>
+                </div>
+              </div>
+
+              <div class="card">
+                <h2>HIPAA gate - <span class="status-badge {badge_class}">{badge_status}</span></h2>
+                <div class="summary-line">{html.escape(gate.summary())}</div>
+                {checks_html}
+              </div>
+
+              <div class="card">
+                <h2>Wave plan</h2>
+                <div class="summary-line">{html.escape(plan.summary())}</div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th><th>Wave</th><th>Users</th><th>Est. hours</th>
+                      <th>Blockers</th><th>Sample users</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waves_html}
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="card">
+                <h2>Post-cutover audit (simulated: wave 1 completed)</h2>
+                <div class="summary-line">{html.escape(audit.summary())}</div>
+                {audit_html}
+              </div>
+
+              <div class="footer">
+                Regenerated on every push. Install: <code>pip install -e .</code>
+                then <code>healthcare-m365 demo</code>.<br>
+                Source: <a href="https://github.com/derekgallardo01/healthcare-m365-migration">github.com/derekgallardo01/healthcare-m365-migration</a>
+              </div>
+            </div>
+          </body>
+          </html>
+          """
+
+          with open("site/index.html", "w", encoding="utf-8") as fh:
+              fh.write(page)
+          print("wrote site/index.html")
+          PY
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v5

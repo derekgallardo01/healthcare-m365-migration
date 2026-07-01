@@ -1,0 +1,28 @@
+[project]
+name = "healthcare-m365-migration"
+version = "1.0.0"
+description = "HIPAA-aware M365 migration kit for healthcare orgs. Plans a phased pilot migration, gates it on a HIPAA-specific config checklist (PHI DLP, sensitivity labels, Purview retention, Copilot data residency), and runs a post-cutover audit (licenses, MFA, inactive accounts, label coverage). Stub-by-default tenant; documented Graph swap point."
+authors = [{name = "Derek Gallardo", email = "derekgallardo01@gmail.com"}]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+graph = [
+    "msgraph-sdk>=1.0.0",
+    "msal>=1.24.0",
+]
+
+[project.scripts]
+healthcare-m365 = "healthcare_m365.cli:main"
+
+[project.urls]
+Repository = "https://github.com/derekgallardo01/healthcare-m365-migration"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
